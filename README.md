@@ -13,5 +13,6 @@ Positional:
   - `input`  Input file path
 
 Options:
+  - `-b`, `--blockSize <int>`  Block size (default: 65536) 
   - `-v`, `--verbose`   Enable verbose output (default: false)
   - `-h`, `--help`      Show this help message
