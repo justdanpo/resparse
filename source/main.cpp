@@ -39,8 +39,10 @@ public:
         }
     }
 
-    void resparse()
+    void resparse(DWORD blockSize)
     {
+        this->blockSize = blockSize;
+
         if (!io_set_sparse_flag())
         {
             throw std::exception("Cannot set sparse");
@@ -50,9 +52,7 @@ public:
     }
 
 private:
-    static constexpr DWORD BLOCKSIZE = 512;
-    static_assert(BLOCKSIZE <= 0xFFFFFFFFUL);
-
+    DWORD blockSize;
     bool verbose;
     wil::unique_hfile fileHandle;
     LONGLONG fileSize;
@@ -186,11 +186,22 @@ private:
         deallocateQueue.push_back(range);
     }
 
+    LONGLONG get_file_deallocated_bytes()
+    {
+        FILE_STANDARD_INFO fileInfo;
+        if (!GetFileInformationByHandleEx(fileHandle.get(), FileStandardInfo, &fileInfo, sizeof(fileInfo)))
+        {
+            throw std::exception("Cannot get file info");
+        }
+
+        return fileInfo.EndOfFile.QuadPart - fileInfo.AllocationSize.QuadPart;
+    }
+
     void process_file(std::deque<range> allocatedRanges)
     {
         deallocated_bytes = 0;
 
-        std::vector<char> buff(BLOCKSIZE);
+        std::vector<char> buff(blockSize);
         for (LONGLONG pos = 0; pos < fileSize;)
         {
             if (!allocatedRanges.empty() && pos >= allocatedRanges.front().end)
@@ -215,7 +226,7 @@ private:
                 throw std::exception("Cannot set file pointer");
             }
 
-            LONGLONG requiredSize = std::min(static_cast<LONGLONG>(BLOCKSIZE), allocatedRanges.front().end - pos);
+            LONGLONG requiredSize = std::min(static_cast<LONGLONG>(blockSize), allocatedRanges.front().end - pos);
             DWORD bytesRead;
             if (!ReadFile(fileHandle.get(), buff.data(), static_cast<DWORD>(requiredSize), &bytesRead, NULL) || bytesRead == 0)
             {
@@ -239,7 +250,9 @@ private:
 
         deallocate_remained();
 
-        std::cout << "Done! " << deallocated_bytes << " bytes zeroed" << std::endl;
+        std::cout
+            << "Done! " << deallocated_bytes << " bytes zeroed. Total deallocated bytes reported by OS: "
+            << get_file_deallocated_bytes() << std::endl;
     }
 };
 
@@ -252,12 +265,13 @@ int main(int argc, char *argv[])
         cli.setHelpHeader("resparse v1.0");
 
         cli.addString("input", "Input file path");
+        cli.addInt({"-b", "--blockSize"}, "Block size", 65536).isInRange(512, 1024 * 1024 * 1024);
         cli.addBool({"-v", "--verbose"}, "Enable verbose output");
 
         auto args = cli.parse();
 
         resparser resparser_obj(args.getString("input").c_str(), args.getBool("verbose"));
-        resparser_obj.resparse();
+        resparser_obj.resparse(args.getInt("blockSize"));
         return 0;
     }
     catch (const Argy::Exception &ex)
